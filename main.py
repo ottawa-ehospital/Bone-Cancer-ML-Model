@@ -46,6 +46,16 @@ def predict(image_path):
 #         else:
 #             return "Highly aggressive cancer detected. Urgent consultation with a specialized oncology team is required. Treatment will likely involve aggressive combination therapy and possibly clinical trials."
 
+@app.get("/")
+async def root():
+    try:
+        return {
+            "message": "Hello World",
+            "status": "success"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error occurred: {str(e)}")
+        
 @app.post("/predict")
 async def predict_image(file: UploadFile):
     try:
