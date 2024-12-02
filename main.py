@@ -35,16 +35,16 @@ def predict(image_path):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error during prediction: {str(e)}")
 
-def suggest_treatment(prediction, malignant_prob):
-    if prediction == 'normal':
-        return "No cancer detected. Regular check-ups and maintaining a healthy lifestyle are recommended."
-    else:
-        if malignant_prob < 0.7:
-            return "Early-stage cancer detected. Consult with an oncologist for a detailed treatment plan. Options may include surgery, radiation therapy, or chemotherapy."
-        elif 0.7 <= malignant_prob < 0.9:
-            return "Advanced cancer detected. Immediate consultation with an oncologist is crucial. Treatment may involve a combination of surgery, chemotherapy, radiation therapy, and possibly immunotherapy."
-        else:
-            return "Highly aggressive cancer detected. Urgent consultation with a specialized oncology team is required. Treatment will likely involve aggressive combination therapy and possibly clinical trials."
+# def suggest_treatment(prediction, malignant_prob):
+#     if prediction == 'normal':
+#         return "No cancer detected. Regular check-ups and maintaining a healthy lifestyle are recommended."
+#     else:
+#         if malignant_prob < 0.7:
+#             return "Early-stage cancer detected. Consult with an oncologist for a detailed treatment plan. Options may include surgery, radiation therapy, or chemotherapy."
+#         elif 0.7 <= malignant_prob < 0.9:
+#             return "Advanced cancer detected. Immediate consultation with an oncologist is crucial. Treatment may involve a combination of surgery, chemotherapy, radiation therapy, and possibly immunotherapy."
+#         else:
+#             return "Highly aggressive cancer detected. Urgent consultation with a specialized oncology team is required. Treatment will likely involve aggressive combination therapy and possibly clinical trials."
 
 @app.post("/predict")
 async def predict_image(file: UploadFile):
@@ -60,13 +60,13 @@ async def predict_image(file: UploadFile):
             prediction = 'malignant'
         else:
             prediction = 'normal'
-        treatment_suggestion = suggest_treatment(prediction, malignant)
+        # treatment_suggestion = suggest_treatment(prediction, malignant)
 
         return {
             "prediction": prediction,
             "malignant_prob": malignant,
             "normal_prob": normal,
-            "treatment_suggestion": treatment_suggestion
+            # "treatment_suggestion": treatment_suggestion
         }
     except HTTPException as e:
         raise e
