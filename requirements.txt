@@ -1,8 +1,8 @@
-fastapi
-uvicorn
-numpy
+fastapi==0.104.1
+uvicorn==0.24.0
+python-multipart==0.0.6
 tensorflow-cpu
-keras
-pydantic
-python-multipart
-Pillow
+keras==2.14.0
+numpy==1.24.3
+Pillow==10.1.0
+python-dotenv==1.0.0

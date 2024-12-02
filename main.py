@@ -6,82 +6,132 @@ from keras.applications.vgg19 import preprocess_input
 import numpy as np
 import os
 from tempfile import NamedTemporaryFile
+import uvicorn
+import logging
+from typing import Dict, Union
+import tensorflow as tf
 
-app = FastAPI()
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(
+    title="Cancer Detection API",
+    description="API for detecting cancer in medical images using VGG19 model",
+    version="1.0.0"
+)
 
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Load your Keras model
-model = load_model('model_vgg19.h5')
+# Load model with error handling
+try:
+    model = load_model('model_vgg19.h5')
+    # Optimize model loading for production
+    model.make_predict_function()
+    logger.info("Model loaded successfully")
+except Exception as e:
+    logger.error(f"Error loading model: {str(e)}")
+    raise RuntimeError("Failed to load model")
 
-def predict(image_path):
+def predict(image_path: str) -> tuple[float, float]:
+    """
+    Perform prediction on the input image.
+    
+    Args:
+        image_path (str): Path to the input image
+        
+    Returns:
+        tuple: Probability scores for malignant and normal classes
+    """
     try:
         img = image.load_img(image_path, target_size=(224, 224))
         x = image.img_to_array(img)
         x = np.expand_dims(x, axis=0)
         img_data = preprocess_input(x)
-        classes = model.predict(img_data)
+        
+        # Use error handling for prediction
+        with tf.device('/CPU:0'):  # Force CPU usage for more stable deployment
+            classes = model.predict(img_data)
+            
         malignant = float(classes[0, 0])
         normal = float(classes[0, 1])
-
         return malignant, normal
     except Exception as e:
+        logger.error(f"Prediction error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error during prediction: {str(e)}")
 
-# def suggest_treatment(prediction, malignant_prob):
-#     if prediction == 'normal':
-#         return "No cancer detected. Regular check-ups and maintaining a healthy lifestyle are recommended."
-#     else:
-#         if malignant_prob < 0.7:
-#             return "Early-stage cancer detected. Consult with an oncologist for a detailed treatment plan. Options may include surgery, radiation therapy, or chemotherapy."
-#         elif 0.7 <= malignant_prob < 0.9:
-#             return "Advanced cancer detected. Immediate consultation with an oncologist is crucial. Treatment may involve a combination of surgery, chemotherapy, radiation therapy, and possibly immunotherapy."
-#         else:
-#             return "Highly aggressive cancer detected. Urgent consultation with a specialized oncology team is required. Treatment will likely involve aggressive combination therapy and possibly clinical trials."
-
 @app.get("/")
-async def root():
-    try:
-        return {
-            "message": "Hello World",
-            "status": "success"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error occurred: {str(e)}")
-        
+async def root() -> Dict[str, str]:
+    """Root endpoint to verify API status"""
+    return {
+        "message": "Cancer Detection API is running",
+        "status": "success",
+        "version": "1.0.0"
+    }
+
 @app.post("/predict")
-async def predict_image(file: UploadFile):
+async def predict_image(file: UploadFile) -> Dict[str, Union[str, float]]:
+    """
+    Process uploaded image and return cancer prediction results.
+    
+    Args:
+        file (UploadFile): Uploaded image file
+        
+    Returns:
+        dict: Prediction results including class and probabilities
+    """
+    if not file.filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+        raise HTTPException(status_code=400, detail="Only PNG and JPEG images are supported")
+    
+    temp_image_path = None
     try:
-        with NamedTemporaryFile(delete=False) as temp_image:
+        # Create temp file with proper suffix
+        suffix = os.path.splitext(file.filename)[1].lower()
+        with NamedTemporaryFile(delete=False, suffix=suffix) as temp_image:
             contents = await file.read()
             temp_image.write(contents)
             temp_image_path = temp_image.name
-
+            
         malignant, normal = predict(temp_image_path)
-
-        if malignant > normal:
-            prediction = 'malignant'
-        else:
-            prediction = 'normal'
-        # treatment_suggestion = suggest_treatment(prediction, malignant)
-
+        prediction = 'malignant' if malignant > normal else 'normal'
+        
         return {
             "prediction": prediction,
-            "malignant_prob": malignant,
-            "normal_prob": normal,
-            # "treatment_suggestion": treatment_suggestion
+            "malignant_prob": round(malignant, 4),
+            "normal_prob": round(normal, 4),
+            "confidence": round(max(malignant, normal) * 100, 2)
         }
+        
     except HTTPException as e:
         raise e
     except Exception as e:
+        logger.error(f"Processing error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error during processing: {str(e)}")
     finally:
-        if 'temp_image_path' in locals() and os.path.exists(temp_image_path):
-            os.remove(temp_image_path)
+        if temp_image_path and os.path.exists(temp_image_path):
+            try:
+                os.remove(temp_image_path)
+            except Exception as e:
+                logger.error(f"Error removing temporary file: {str(e)}")
+
+# Heroku deployment configuration
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 8000))
+    host = os.getenv("HOST", "0.0.0.0")
+    
+    # Configure server
+    uvicorn.run(
+        "main:app",
+        host=host,
+        port=port,
+        workers=1,  # Recommended for Heroku
+        log_level="info",
+        reload=False  # Disable reload in production
+    )
