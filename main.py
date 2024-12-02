@@ -1,15 +1,17 @@
+import os
 from fastapi import FastAPI, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from keras.models import load_model
 from keras.preprocessing import image
 from keras.applications.vgg19 import preprocess_input
 import numpy as np
-import os
 from tempfile import NamedTemporaryFile
 import uvicorn
 import logging
 from typing import Dict, Union
 import tensorflow as tf
+import requests
+from urllib.parse import urlparse, parse_qs
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -30,15 +32,54 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load model with error handling
+def get_google_drive_file_id(url: str) -> str:
+    """Extract file ID from Google Drive URL"""
+    if 'drive.google.com' not in url:
+        return url
+        
+    parsed = urlparse(url)
+    if 'id=' in url:
+        return parse_qs(parsed.query)['id'][0]
+    return parsed.path.split('/')[-2]
+
+def download_from_google_drive():
+    """Download the model file from Google Drive"""
+    drive_url = os.getenv('MODEL_URL')
+    if not drive_url:
+        raise RuntimeError("MODEL_URL environment variable is not set")
+    
+    try:
+        logger.info("Downloading model from Google Drive...")
+        file_id = get_google_drive_file_id(drive_url)
+        download_url = f"https://drive.google.com/uc?id={file_id}"
+        
+        local_model_path = "model_vgg19.h5"
+        
+        session = requests.Session()
+        response = session.get(download_url, stream=True)
+        response.raise_for_status()
+        
+        with open(local_model_path, "wb") as model_file:
+            for chunk in response.iter_content(chunk_size=32768):
+                if chunk:
+                    model_file.write(chunk)
+                    
+        logger.info("Model downloaded successfully")
+        return local_model_path
+        
+    except Exception as e:
+        logger.error(f"Error downloading model: {str(e)}")
+        raise RuntimeError(f"Failed to download model: {str(e)}")
+
+# Initialize model at startup
 try:
-    model = load_model('model_vgg19.h5')
-    # Optimize model loading for production
+    model_path = download_from_google_drive()
+    model = load_model(model_path)
     model.make_predict_function()
     logger.info("Model loaded successfully")
 except Exception as e:
-    logger.error(f"Error loading model: {str(e)}")
-    raise RuntimeError("Failed to load model")
+    logger.error(f"Error initializing model: {str(e)}")
+    raise RuntimeError("Failed to initialize model")
 
 def predict(image_path: str) -> tuple[float, float]:
     """
@@ -56,7 +97,6 @@ def predict(image_path: str) -> tuple[float, float]:
         x = np.expand_dims(x, axis=0)
         img_data = preprocess_input(x)
         
-        # Use error handling for prediction
         with tf.device('/CPU:0'):  # Force CPU usage for more stable deployment
             classes = model.predict(img_data)
             
@@ -71,7 +111,7 @@ def predict(image_path: str) -> tuple[float, float]:
 async def root() -> Dict[str, str]:
     """Root endpoint to verify API status"""
     return {
-        "message": "Cancer Detection API is running",
+        "message": "Bone Cancer Detection API is running",
         "status": "success",
         "version": "1.0.0"
     }
@@ -92,7 +132,6 @@ async def predict_image(file: UploadFile) -> Dict[str, Union[str, float]]:
     
     temp_image_path = None
     try:
-        # Create temp file with proper suffix
         suffix = os.path.splitext(file.filename)[1].lower()
         with NamedTemporaryFile(delete=False, suffix=suffix) as temp_image:
             contents = await file.read()
@@ -124,14 +163,13 @@ async def predict_image(file: UploadFile) -> Dict[str, Union[str, float]]:
 # Heroku deployment configuration
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
-    host = os.getenv("HOST", "0.0.0.0")
     
     # Configure server
     uvicorn.run(
         "main:app",
-        host=host,
+        host="0.0.0.0",
         port=port,
-        workers=1,  # Recommended for Heroku
+        workers=1,
         log_level="info",
-        reload=False  # Disable reload in production
+        reload=False
     )
